@@ -1,0 +1,113 @@
+/* =========================================================
+   Observatório das Emendas RS
+   Identidade visual — Versão 1.0
+   ========================================================= */
+
+/* Fundo global e ajustes de fonte */
+body {
+    background-color: #0e1117;
+    color: #ffffff;
+    font-family: 'Inter', sans-serif;
+}
+
+/* Cabeçalho */
+.oers-title {
+    font-size: 2.6rem;
+    font-weight: 800;
+    color: #ffffff;
+    margin-bottom: 0.25rem;
+    letter-spacing: -0.02em;
+}
+
+.oers-subtitle {
+    font-size: 1.05rem;
+    color: #b0b0b0;
+    margin-bottom: 1.25rem;
+    font-weight: 400;
+}
+
+/* Bloco institucional da pesquisa */
+.oers-research-block {
+    padding: 1rem 1.25rem;
+    border-left: 4px solid #d62728;
+    background-color: #1a1c24;
+    border-radius: 10px;
+    margin-bottom: 1.75rem;
+    color: #e6e6e6;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* Títulos de seção */
+.oers-section-title {
+    font-size: 1.35rem;
+    font-weight: 650;
+    margin-top: 1.55rem;
+    margin-bottom: 0.75rem;
+    color: #ffffff;
+    letter-spacing: -0.01em;
+}
+
+/* Cartões analíticos */
+.oers-card {
+    background-color: #262730;
+    border: 1px solid #3a4050;
+    border-radius: 12px;
+    padding: 18px;
+    margin-bottom: 14px;
+    color: #ffffff;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.oers-card:hover {
+    transform: translateY(-4px);
+    border-color: #d62728;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.24);
+}
+
+.oers-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.95rem;
+    color: #b0b0b0;
+    margin-bottom: 8px;
+    font-weight: 500;
+}
+
+.oers-card-value {
+    font-size: 1.75rem;
+    font-weight: 750;
+    color: #ffffff;
+    line-height: 1.25;
+}
+
+.oers-card-help {
+    font-size: 0.8rem;
+    color: #9a9a9a;
+    margin-top: 10px;
+    border-top: 1px solid #3a4050;
+    padding-top: 10px;
+    line-height: 1.45;
+}
+
+/* Textos narrativos */
+.oers-narrative-text {
+    font-size: 1.05rem;
+    line-height: 1.75;
+    color: #f2f2f2;
+    margin: 0;
+    font-weight: 400;
+}
+
+/* Rodapé */
+.oers-footer {
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    padding-bottom: 0.5rem;
+    border-top: 1px solid #3a4050;
+    text-align: center;
+    color: #8f8f8f;
+    font-size: 0.82rem;
+    line-height: 1.6;
+}
