@@ -1,8 +1,8 @@
 import math
 import pandas as pd
-import geopandas as gpd
 import plotly.express as px
 import plotly.graph_objects as go
+from shapely.geometry import shape
 
 from config import MAPA_COR_GRADIENTE
 from utils.format_utils import format_currency, format_integer
@@ -10,16 +10,35 @@ from utils.format_utils import format_currency, format_integer
 
 def _build_centroids_dataframe(geojson_data: dict) -> pd.DataFrame:
     """Cria latitude e longitude aproximadas para cada município do GeoJSON."""
-    gdf = gpd.GeoDataFrame.from_features(geojson_data["features"], crs="EPSG:4326")
-    points = gdf.geometry.representative_point()
+    rows = []
 
-    return pd.DataFrame(
-        {
-            "municipio_normalizado": gdf["name"],
-            "lat": points.y,
-            "lon": points.x,
-        }
-    )
+    for feature in geojson_data.get("features", []):
+        properties = feature.get("properties", {})
+        geometry_data = feature.get("geometry")
+
+        if not geometry_data:
+            continue
+
+        geom = shape(geometry_data)
+        point = geom.representative_point()
+
+        municipio = (
+            properties.get("name")
+            or properties.get("NOME")
+            or properties.get("NM_MUN")
+            or properties.get("municipio_normalizado")
+        )
+
+        if municipio:
+            rows.append(
+                {
+                    "municipio_normalizado": municipio,
+                    "lat": point.y,
+                    "lon": point.x,
+                }
+            )
+
+    return pd.DataFrame(rows)
 
 
 def _format_colorbar_value(value: float) -> str:
@@ -57,14 +76,7 @@ def _add_vote_markers(
     geojson_data: dict,
     municipal_df: pd.DataFrame,
 ) -> go.Figure:
-    """
-    Adiciona marcadores eleitorais para todos os municípios.
-
-    Estratégia visual:
-    - tamanho fixo para evitar poluição;
-    - intensidade do azul representa o volume de votos;
-    - tooltip reúne emendas e votos.
-    """
+    """Adiciona marcadores eleitorais para todos os municípios."""
     centroids_df = _build_centroids_dataframe(geojson_data)
 
     vote_df = municipal_df.merge(
