@@ -1,4 +1,5 @@
 import pandas as pd
+import unicodedata
 import streamlit as st
 
 from config import PATH_CSV, PATH_GEOJSON
@@ -25,12 +26,16 @@ TIPO_PAGAMENTO_MUNICIPALIZADO = "pagamento_municipalizado"
 TIPO_PAGAMENTO_NAO_MUNICIPALIZADO = "pagamento_nao_municipalizado"
 TIPO_VOTO_SEM_PAGAMENTO = "voto_sem_pagamento_municipalizado"
 
+VERSAO_APP = "1.0.2"
+
 
 def format_percentage_br(value: float) -> str:
+    """Formata percentual com uma casa decimal no padrão brasileiro."""
     return f"{value:.1f}%".replace(".", ",")
 
 
 def ensure_tipo_registro_column(df: pd.DataFrame) -> pd.DataFrame:
+    """Garante compatibilidade com bases antigas sem a coluna tipo_registro."""
     df = df.copy()
 
     if "tipo_registro" not in df.columns:
@@ -42,6 +47,7 @@ def ensure_tipo_registro_column(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def split_observatorio_data(df_parl: pd.DataFrame) -> dict:
+    """Separa a base do parlamentar em blocos financeiro, territorial e eleitoral."""
     df_parl = ensure_tipo_registro_column(df_parl)
 
     financeiro_mapa = df_parl[
@@ -75,6 +81,7 @@ def split_observatorio_data(df_parl: pd.DataFrame) -> dict:
 
 
 def sum_values(df: pd.DataFrame, column: str) -> float:
+    """Soma uma coluna numérica de forma segura."""
     if df.empty or column not in df.columns:
         return 0.0
 
@@ -82,11 +89,102 @@ def sum_values(df: pd.DataFrame, column: str) -> float:
 
 
 def count_distinct_nonempty(df: pd.DataFrame, column: str) -> int:
+    """Conta valores distintos não vazios em uma coluna."""
     if df.empty or column not in df.columns:
         return 0
 
     serie = df[column].fillna("").astype(str).str.strip()
+
     return int(serie[serie != ""].nunique())
+
+
+def normalize_text_for_match(value: object) -> str:
+    """Normaliza texto para comparação sem depender de acento ou caixa."""
+    if pd.isna(value):
+        return ""
+
+    text = str(value).strip()
+
+    if text == "" or text.lower() in ["nan", "none"]:
+        return ""
+
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(char for char in text if not unicodedata.combining(char))
+    text = text.upper()
+    text = " ".join(text.split())
+
+    return text
+
+
+def normalize_locality_type(value: object) -> str:
+    """Padroniza os rótulos de tipo de localidade usados nos cards."""
+    text = normalize_text_for_match(value)
+
+    if text == "":
+        return ""
+
+    if text in ["MUNICIPAL", "MUNICIPIO"]:
+        return "Municipal"
+
+    if text in ["ESTADUAL/UF", "UF", "ESTADUAL", "ESTADO"]:
+        return "Estadual/UF"
+
+    if text in ["NACIONAL", "BRASIL"]:
+        return "Nacional"
+
+    if text == "SEM PAGAMENTO MUNICIPALIZADO":
+        return "Sem pagamento municipalizado"
+
+    return str(value).strip()
+
+
+def classify_destination_for_card(row: pd.Series) -> str:
+    """
+    Classifica a linha para os cards Municipal / UF / Nacional.
+
+    Prioridade:
+    1. tipo_destinacao, que é a coluna consolidada correta da base v105.
+    2. Colunas equivalentes, se existirem.
+    3. Localidade de aplicação do recurso, como fallback.
+    """
+    for column in [
+        "tipo_destinacao",
+        "tipo_localidade_aplicacao",
+        "tipo_localidade",
+    ]:
+        if column in row.index:
+            classification = normalize_locality_type(row[column])
+
+            if classification in [
+                "Municipal",
+                "Estadual/UF",
+                "Nacional",
+                "Sem pagamento municipalizado",
+            ]:
+                return classification
+
+    for column in [
+        "Localidade de aplicação do recurso",
+        "localidade_aplicacao",
+    ]:
+        if column not in row.index:
+            continue
+
+        location = normalize_text_for_match(row[column])
+
+        if location == "":
+            continue
+
+        if location in ["NACIONAL", "BRASIL"] or "NACIONAL" in location:
+            return "Nacional"
+
+        if "(UF)" in location or location in ["RIO GRANDE DO SUL", "RS"]:
+            return "Estadual/UF"
+
+        if location.endswith("- RS") or " - RS" in str(row[column]):
+            return "Municipal"
+
+    return ""
 
 
 def build_observatorio_indicators(
@@ -94,6 +192,7 @@ def build_observatorio_indicators(
     financeiro_total: pd.DataFrame,
     eleitoral: pd.DataFrame,
 ) -> dict:
+    """Calcula indicadores compatíveis com a base v105."""
     municipios_contemplados = count_distinct_nonempty(
         financeiro_mapa,
         "municipio_normalizado",
@@ -105,16 +204,46 @@ def build_observatorio_indicators(
     valor_total_uf = 0.0
     valor_total_nacional = 0.0
 
-    if not financeiro_total.empty and "tipo_destinacao" in financeiro_total.columns:
-        valor_total_uf = sum_values(
-            financeiro_total[financeiro_total["tipo_destinacao"] == "Estadual/UF"],
-            "Valor Pago",
-        )
+    if not financeiro_total.empty:
+        financeiro_total = financeiro_total.copy()
 
-        valor_total_nacional = sum_values(
-            financeiro_total[financeiro_total["tipo_destinacao"] == "Nacional"],
-            "Valor Pago",
-        )
+        nao_municipalizado = financeiro_total[
+            financeiro_total["tipo_registro"] == TIPO_PAGAMENTO_NAO_MUNICIPALIZADO
+        ].copy()
+
+        if not nao_municipalizado.empty:
+            mask_nacional = pd.Series(False, index=nao_municipalizado.index)
+
+            for column in [
+                "Localidade de aplicação do recurso",
+                "localidade_aplicacao",
+                "tipo_destinacao",
+                "tipo_localidade_aplicacao",
+                "tipo_localidade",
+            ]:
+                if column not in nao_municipalizado.columns:
+                    continue
+
+                serie_normalizada = nao_municipalizado[column].apply(
+                    normalize_text_for_match
+                )
+
+                mask_nacional = mask_nacional | serie_normalizada.str.contains(
+                    "NACIONAL|BRASIL",
+                    case=False,
+                    regex=True,
+                    na=False,
+                )
+
+            valor_total_nacional = sum_values(
+                nao_municipalizado[mask_nacional],
+                "Valor Pago",
+            )
+
+            valor_total_uf = sum_values(
+                nao_municipalizado[~mask_nacional],
+                "Valor Pago",
+            )
 
     if eleitoral.empty:
         total_votos = 0
@@ -123,6 +252,7 @@ def build_observatorio_indicators(
             eleitoral.groupby("municipio_normalizado", as_index=False)
             .agg(QT_VOTOS=("QT_VOTOS", "sum"))
         )
+
         total_votos = int(
             pd.to_numeric(
                 votos_por_municipio["QT_VOTOS"],
@@ -142,7 +272,8 @@ def build_observatorio_indicators(
     }
 
 
-def normalize_priority_label(value: str) -> str:
+def normalize_priority_label(value: object) -> str:
+    """Padroniza rótulos vazios da faixa de prioridade."""
     texto = str(value).strip()
 
     if texto == "" or texto.lower() in ["nan", "none"]:
@@ -152,6 +283,7 @@ def normalize_priority_label(value: str) -> str:
 
 
 def build_ips_summary_v105(financeiro_mapa: pd.DataFrame) -> dict:
+    """Cria narrativa IPS usando apenas pagamentos municipalizados."""
     if financeiro_mapa.empty:
         return {
             "texto": (
@@ -211,6 +343,7 @@ def build_ips_summary_v105(financeiro_mapa: pd.DataFrame) -> dict:
         faixa = row["faixa_prioridade_limpa"]
         valor = float(row["valor_pago"])
         percentual = valor / total * 100
+
         partes.append(f"{format_percentage_br(percentual)} à faixa de {faixa}")
 
     if len(partes) == 1:
@@ -245,9 +378,11 @@ def get_data():
     return df, geojson
 
 
+# Dados
 df, geojson = get_data()
 
 
+# Barra lateral — identidade, sobre e filtro
 with st.sidebar:
     st.markdown("## 🦉 Observatório")
     st.caption("Transparência • Evidências • Análise Territorial")
@@ -271,6 +406,7 @@ with st.sidebar:
     )
 
 
+# Cabeçalho principal
 st.markdown(
     '<h1 class="oers-title">🦉 Observatório das Emendas RS</h1>',
     unsafe_allow_html=True,
@@ -291,6 +427,7 @@ st.markdown(
 )
 
 
+# Processamento
 df_parl = filter_by_parliamentarian(df, parlamentar_selecionado)
 blocos = split_observatorio_data(df_parl)
 
@@ -300,6 +437,7 @@ df_eleitoral = blocos["eleitoral"]
 
 mun_data = aggregate_municipal_data(df_financeiro_mapa)
 vote_mun_data = aggregate_municipal_data(df_eleitoral)
+
 ips_data = aggregate_by_ips_priority(df_financeiro_mapa)
 
 indicadores = build_observatorio_indicators(
@@ -309,9 +447,11 @@ indicadores = build_observatorio_indicators(
 )
 
 narrativa_ips = build_ips_summary_v105(df_financeiro_mapa)
+
 match_report = build_electoral_match_report(df_eleitoral, top_n=TOP_N_ICT)
 
 
+# Bloco 1 — Mapa + IPS + indicadores
 col1, col2 = st.columns([4, 1])
 
 with col1:
@@ -402,6 +542,7 @@ with col2:
     )
 
 
+# Bloco 2 — Leitura IPS
 st.markdown(
     '<h2 class="oers-section-title">🦉 Leitura do Observatório</h2>',
     unsafe_allow_html=True,
@@ -417,6 +558,7 @@ st.markdown(
 )
 
 
+# Bloco 3 — ICT
 st.markdown(
     '<h2 class="oers-section-title">🔎 Correspondência Territorial (ICT)</h2>',
     unsafe_allow_html=True,
@@ -490,6 +632,7 @@ with st.expander("Ver municípios coincidentes"):
         st.info("Não há municípios coincidentes no ranking analisado.")
 
 
+# Nota metodológica
 with st.expander("Nota metodológica sobre municipalização e votos"):
     st.markdown(
         """
@@ -513,11 +656,12 @@ with st.expander("Nota metodológica sobre municipalização e votos"):
     )
 
 
+# Rodapé
 st.markdown(
-    """
+    f"""
     <div class="oers-footer">
         <strong>Observatório das Emendas RS</strong><br>
-        Versão 1.0.1<br>
+        Versão {VERSAO_APP}<br>
         Projeto acadêmico desenvolvido na Universidade Federal do Rio Grande do Sul (UFRGS)
     </div>
     """,
